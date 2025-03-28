@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, Button, StyleSheet, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import * as Location from 'expo-location';
+import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 
 export default function App() {
   const [descricaoCafe, setDescricaoCafe] = useState('');
@@ -8,45 +10,109 @@ export default function App() {
   const [carregando, setCarregando] = useState(false);
   const [localizacao, setLocalizacao] = useState(null);
 
-  // Solicitar permissão de localização
+  // Solicitar permissões
   useEffect(() => {
     (async () => {
+      // Permissão de localização
       let { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
         Alert.alert('Permissão negada', 'Precisamos da localização para indicar cafeterias!');
       }
+
+      // Permissão para acessar fotos
+      const { status: mediaStatus } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (mediaStatus !== 'granted') {
+        Alert.alert('Permissão necessária', 'Precisamos acessar suas fotos para analisar o café!');
+      }
     })();
   }, []);
 
-  // Função para analisar o café (simulação)
-  const analisarCafe = async () => {
-    if (!descricaoCafe) {
-      Alert.alert('Ops!', 'Descreva o café primeiro, vovó! 🫢');
+// Função para analisar por IMAGEM (versão corrigida)
+const analisarCafePorImagem = async () => {
+  setCarregando(true);
+  try {
+    // 1. Solicitar permissão da câmera
+    const { status: cameraStatus } = await ImagePicker.requestCameraPermissionsAsync();
+    if (cameraStatus !== 'granted') {
+      Alert.alert('Permissão necessária', 'Precisamos acessar sua câmera!');
       return;
     }
 
-    setCarregando(true);
-    
-    // Simulação de chamada à API (substitua pelo seu endpoint do Google AI Studio)
-    setTimeout(() => {
-      const respostaFake = {
-        tipo: 'Cappuccino quente',
-        leite: 'De aveia',
-        latteArt: 'Coração 💖',
-        grao: 'Arabica',
-        momento: 'Café da manhã com pãozinho!',
-        curiosidade: 'Nome vem dos monges capuchinhos!',
-        cafeterias: ['Café da Rosa (⭐ 4.8)', 'Padaria Doce Grão (⭐ 4.5)'],
-      };
-      
-      setResposta(respostaFake);
+    // 2. Abrir a câmera
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.8,
+    });
+
+    if (result.canceled) return;
+
+    // ... (restante do código permanece igual)
+
+      const base64 = await FileSystem.readAsStringAsync(result.assets[0].uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      const imagemBase64 = `data:image/jpeg;base64,${base64}`;
+
+      const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-vision:generateContent', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': 'AIzaSyBrcGKhhoUvgYvD_XKawfP93lHkn2qPK6E'
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { 
+                text: `Analise esta imagem de café e responda em formato JSON: 
+                { "tipo": "ex: cappuccino", "leite": "ex: integral", 
+                "latteArt": "ex: coração", "grao": "ex: arábica", 
+                "momento": "ex: manhã", "curiosidade": "fato histórico" }` 
+              },
+              { 
+                inline_data: { 
+                  mime_type: "image/jpeg", 
+                  data: imagemBase64.split(',')[1] 
+                } 
+              }
+            ]
+          }]
+        })
+      });
+
+      const dados = await response.json();
+      const textoResposta = dados.candidates[0].content.parts[0].text;
+      const respostaFormatada = JSON.parse(textoResposta.match(/\{.*\}/s)[0]);
+
+      setResposta({
+        tipo: respostaFormatada.tipo,
+        leite: respostaFormatada.leite,
+        latteArt: respostaFormatada.latteArt,
+        grao: respostaFormatada.grao,
+        momento: respostaFormatada.momento,
+        curiosidade: respostaFormatada.curiosidade,
+        cafeterias: ["Café da Rosa (⭐ 4.8)", "Padaria Doce Grão (⭐ 4.5)"]
+      });
+
+    } catch (erro) {
+      Alert.alert('Erro', 'Não consegui analisar o café. Tente novamente! 😢');
+    } finally {
       setCarregando(false);
-    }, 1500);
+    }
   };
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.titulo}>App da Vovó Cafeteira! ☕</Text>
+
+      <Button
+        title="📸 Tirar Foto do Café"
+        onPress={analisarCafePorImagem}
+        color="#6F4E37"
+        style={styles.botao}
+      />
+
+      <Text style={styles.ou}>OU</Text>
 
       <TextInput
         style={styles.input}
@@ -56,8 +122,8 @@ export default function App() {
       />
 
       <Button
-        title={carregando ? "Analisando..." : "Ver Detalhes"}
-        onPress={analisarCafe}
+        title={carregando ? "Analisando..." : "Analisar por Texto"}
+        onPress={() => Alert.alert('Modo texto desativado', 'Use a câmera 📸!')}
         color="#6F4E37"
       />
 
@@ -127,5 +193,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#6F4E37',
     marginLeft: 10,
+  },
+  botao: {
+    marginBottom: 15,
+  },
+  ou: {
+    textAlign: 'center',
+    marginVertical: 10,
+    color: '#6F4E37',
+    fontWeight: 'bold',
   },
 });
